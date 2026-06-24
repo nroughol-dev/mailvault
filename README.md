@@ -134,8 +134,8 @@ your arch; the binary still runs on newer DSM.)*
 
 ### ⚙️ Configuration
 
-- **Domain**: set `SUBJECT_DOMAIN` at the top of `scripts/mailvault-root-sync.sh`, and the
-  `postmaster_address` / placeholder-cert CN in `spk/mailvault/src/service-setup.sh`.
+- **Certificate / domain**: **auto-detected** from the DSM **default certificate** — no config
+  needed. To force a specific cert, set `DOMAIN` at the top of `scripts/mailvault-root-sync.sh`.
 - **Served accounts**: by default **every** home user with a `.Maildir` is served. To restrict, list
   the wanted users (one per line) in `/var/packages/mailvault/var/imap-users.list`.
 - **Listen ports**: `10143` (IMAP), `10993` (IMAPS), `10587`/`10465` (submission).
@@ -272,8 +272,8 @@ votre arch ; le binaire tourne quand même sur DSM plus récent.)*
 
 ### ⚙️ Configuration
 
-- **Domaine** : régler `SUBJECT_DOMAIN` en tête de `scripts/mailvault-root-sync.sh`, ainsi que
-  `postmaster_address` / le CN du cert placeholder dans `spk/mailvault/src/service-setup.sh`.
+- **Certificat / domaine** : **auto-détecté** depuis le **certificat par défaut** de DSM — aucun
+  réglage. Pour forcer un cert précis, définir `DOMAIN` en tête de `scripts/mailvault-root-sync.sh`.
 - **Comptes servis** : par défaut **tous** les utilisateurs home ayant un `.Maildir`. Pour restreindre,
   lister les utilisateurs voulus (un par ligne) dans `/var/packages/mailvault/var/imap-users.list`.
 - **Ports d'écoute** : `10143` (IMAP), `10993` (IMAPS), `10587`/`10465` (submission).
