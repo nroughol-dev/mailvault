@@ -96,12 +96,18 @@ find_cert_dir() {
         done
         return
     fi
-    # 2. AUTO : certificat par defaut de DSM (suit le symlink vers _archive/<id>)
+    # 2. AUTO : cert Let's Encrypt (issuer = Let's Encrypt) -> le vrai cert du domaine
+    #    externe, meme si le certificat "par defaut" de DSM est l'auto-signe Synology.
+    for c in "$ARCHIVE_DIR"/*/; do
+        [ -f "${c}cert.pem" ] || continue
+        openssl x509 -in "${c}cert.pem" -noout -issuer 2>/dev/null | grep -qi "let.s encrypt" && { echo "${c%/}"; return; }
+    done
+    # 3. Sinon : certificat par defaut de DSM (suit le symlink vers _archive/<id>)
     if [ -f "${SYSTEM_DEFAULT_CERT}/cert.pem" ] && [ -f "${SYSTEM_DEFAULT_CERT}/privkey.pem" ]; then
         readlink -f "${SYSTEM_DEFAULT_CERT}" 2>/dev/null || echo "${SYSTEM_DEFAULT_CERT}"
         return
     fi
-    # 3. Fallback : premier cert trouve dans _archive
+    # 4. Fallback : premier cert trouve dans _archive
     for c in "$ARCHIVE_DIR"/*/; do
         [ -f "${c}cert.pem" ] && { echo "${c%/}"; return; }
     done
@@ -116,11 +122,12 @@ sync_cert() {
     local dom; dom=$(openssl x509 -in "$src/cert.pem" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p' | head -1)
     log "cert: certificat detecte ${src} (domaine: ${dom:-inconnu})"
 
-    local key crt chn
-    key="$src/RSA-privkey.pem"; [ -f "$key" ] || key="$src/privkey.pem"
-    crt="$src/RSA-cert.pem";    [ -f "$crt" ] || crt="$src/cert.pem"
-    chn="$src/RSA-chain.pem";   [ -f "$chn" ] || chn="$src/chain.pem"
-    for f in "$key" "$crt" "$chn"; do [ -f "$f" ] || { log "cert: fichier manquant $f"; return; }; done
+    local key crt chn fc
+    key="$src/RSA-privkey.pem";  [ -f "$key" ] || key="$src/privkey.pem"
+    crt="$src/RSA-cert.pem";     [ -f "$crt" ] || crt="$src/cert.pem"
+    chn="$src/RSA-chain.pem";    [ -f "$chn" ] || chn="$src/chain.pem"
+    fc="$src/RSA-fullchain.pem"; [ -f "$fc" ]  || fc="$src/fullchain.pem"
+    for f in "$key" "$crt"; do [ -f "$f" ] || { log "cert: fichier manquant $f"; return; }; done
 
     local km cm
     km=$(openssl rsa  -in "$key" -modulus -noout 2>/dev/null | openssl md5 | awk '{print $NF}')
@@ -129,7 +136,13 @@ sync_cert() {
 
     local tmp; tmp=$(mktemp -d)
     cp "$key" "$tmp/privkey.pem"
-    { cat "$crt"; printf '\n'; cat "$chn"; } > "$tmp/fullchain.pem"
+    if [ -f "$fc" ]; then
+        cp "$fc" "$tmp/fullchain.pem"                          # fullchain DSM directement
+    elif [ -f "$chn" ]; then
+        { cat "$crt"; printf '\n'; cat "$chn"; } > "$tmp/fullchain.pem"   # cert + chaine
+    else
+        cp "$crt" "$tmp/fullchain.pem"                         # cert seul (pas de chaine)
+    fi
     sed -i 's/\r$//' "$tmp"/*.pem 2>/dev/null
 
     mkdir -p "$CERT_DST"
