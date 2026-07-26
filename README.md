@@ -27,7 +27,8 @@ A Synology package (`.spk`) running a standalone **Dovecot IMAP/IMAPS** server, 
 
 ### ✨ Features
 
-- **Dovecot 2.3.21.1** compiled for Synology (apollolake / x86-64; an ARM recipe is possible).
+- **Dovecot 2.3.21.1** compiled for Synology — prebuilt for **all Intel x86-64** models and for
+  **ARM 64-bit** (rtd1296 & co).
 - **Serves your existing `~/.Maildir` untouched** — no data migration.
 - **Non-root**: follows the DSM 7 sandbox model (dedicated service user), no Synology signature required.
 - **Login with your NAS account password**: the `$6$` (SHA512-CRYPT) hash is synced from `/etc/shadow`
@@ -75,14 +76,14 @@ git clone --depth 1 https://github.com/SynoCommunity/spksrc.git
 cp -r cross/dovecot   spksrc/cross/
 cp -r spk/mailvault spksrc/spk/
 
-# 2. Build inside a Docker volume (ext4) — example apollolake / DSM 7.3
+# 2. Build inside a Docker volume (ext4) — example: generic Intel x86-64 / DSM 7.3
 docker volume create spksrc-build
 docker run --rm --platform=linux/amd64 -v "$PWD/spksrc":/src:ro -v spksrc-build:/spksrc \
   ghcr.io/synocommunity/spksrc bash -c \
   'cd /src && tar --exclude=./toolchain/*/work --exclude=./.git -cf - . | (cd /spksrc && tar -xpf -)'
 docker run --rm --platform=linux/amd64 -v spksrc-build:/spksrc -w /spksrc \
   -e TAR_CMD="fakeroot tar" ghcr.io/synocommunity/spksrc \
-  bash -c 'cd spk/mailvault && make arch-apollolake-7.3'
+  bash -c 'cd spk/mailvault && make arch-x64-7.3'
 # the .spk lands in the volume under /spksrc/packages/
 ```
 
@@ -96,12 +97,19 @@ docker run --rm --platform=linux/amd64 -v spksrc-build:/spksrc -w /spksrc \
 DSM checks the `arch` field inside each package and only installs one that lists **your model's
 arch** (find yours via Synology's *"What kind of CPU does my NAS have"*). A package built with a
 given toolchain declares the **whole family** that toolchain serves, so a single `.spk` covers many
-models. The [**Releases**](../../releases) provide:
+models. The [**Releases**](../../releases) provide **2 packages that between them cover every 64-bit
+Synology**:
 
-- **`apollolake`** — Intel, **DS918+** and family (DS218+, DS718+, DS418play…).
-- **`aarch64`** — ARM 64-bit: **rtd1296** (e.g. DS220j), rtd1619b, armada37xx.
+- **`mailvault_x64-7.3`** — **all Intel x86-64** models. Declared archs: `apollolake`, `avoton`,
+  `braswell`, `broadwell`, `broadwellnk`, `broadwellnkv2`, `broadwellntbap`, `bromolow`, `denverton`,
+  `epyc7002`, `geminilake`, `geminilakenk`, `grantley`, `icelaked`, `kvmx64`, `purley`, `r1000`,
+  `r1000nk`, `v1000`, `v1000nk` (DS918+, DS220+, DS723+, DS1821+…). Requires DSM ≥ 7.3.
+- **`mailvault_aarch64-7.2`** — **ARM 64-bit**: `rtd1296` (e.g. DS220j), `rtd1619b`, `armada37xx`.
+  Requires DSM ≥ 7.2 (runs fine on 7.3/7.4).
 
-For another family, rebuild by changing only the make target:
+*Tested in production on a **DS918+** (Intel, through a DSM 7.4 upgrade) and a **DS220j** (ARM).*
+
+Those are exactly the two make targets used:
 
 ```bash
 make arch-x64-7.3       # one package for ALL Intel x86-64 models
@@ -146,8 +154,9 @@ your arch; the binary still runs on newer DSM.)*
 - **Security**: NAS `$6$` hashes are copied into the `passwd-file` (0600, readable only by the
   `mailvault` user) — same exposure as any mail server with local auth.
 - **iptables not persistent**: hence the mandatory "at boot" task.
-- **Per-architecture build**: this repo targets **apollolake (x86-64)**. For an ARM NAS
-  (e.g. `rtd1296`/aarch64), recompile `cross/dovecot` for that arch.
+- **Per-architecture build**: Dovecot is compiled per arch family. The two released packages cover
+  **all Intel x86-64** and **ARM 64-bit** (rtd1296/rtd1619b/armada37xx). For anything outside those
+  (e.g. 32-bit ARM `armv7`), recompile `cross/dovecot` for that arch.
 
 ---
 
@@ -164,7 +173,8 @@ Un paquet Synology (`.spk`) faisant tourner un serveur **Dovecot IMAP/IMAPS** au
 
 ### ✨ Caractéristiques
 
-- **Dovecot 2.3.21.1** compilé pour Synology (apollolake / x86-64 ; recette ARM possible).
+- **Dovecot 2.3.21.1** compilé pour Synology — paquets prêts pour **tous les modèles Intel x86-64**
+  et pour l'**ARM 64-bit** (rtd1296 & co).
 - **Sert les `~/.Maildir` existants intacts** — aucune migration.
 - **Non-root** : suit le modèle de sandbox DSM 7 (utilisateur de service dédié), sans signature Synology.
 - **Connexion avec le mot de passe du compte NAS** : le hash `$6$` (SHA512-CRYPT) est synchronisé depuis
@@ -212,14 +222,14 @@ git clone --depth 1 https://github.com/SynoCommunity/spksrc.git
 cp -r cross/dovecot   spksrc/cross/
 cp -r spk/mailvault spksrc/spk/
 
-# 2. Builder dans un volume Docker (ext4) — exemple apollolake / DSM 7.3
+# 2. Builder dans un volume Docker (ext4) — exemple : Intel x86-64 générique / DSM 7.3
 docker volume create spksrc-build
 docker run --rm --platform=linux/amd64 -v "$PWD/spksrc":/src:ro -v spksrc-build:/spksrc \
   ghcr.io/synocommunity/spksrc bash -c \
   'cd /src && tar --exclude=./toolchain/*/work --exclude=./.git -cf - . | (cd /spksrc && tar -xpf -)'
 docker run --rm --platform=linux/amd64 -v spksrc-build:/spksrc -w /spksrc \
   -e TAR_CMD="fakeroot tar" ghcr.io/synocommunity/spksrc \
-  bash -c 'cd spk/mailvault && make arch-apollolake-7.3'
+  bash -c 'cd spk/mailvault && make arch-x64-7.3'
 # le .spk est dans le volume sous /spksrc/packages/
 ```
 
@@ -233,12 +243,20 @@ docker run --rm --platform=linux/amd64 -v spksrc-build:/spksrc -w /spksrc \
 DSM vérifie le champ `arch` dans chaque paquet et n'installe que celui qui liste **l'arch de votre
 modèle** (trouvez la vôtre via *« Quel type de processeur possède mon NAS »* de Synology). Un paquet
 compilé avec un toolchain déclare **toute la famille** que ce toolchain sert → un seul `.spk` couvre
-plusieurs modèles. Les [**Releases**](../../releases) fournissent :
+plusieurs modèles. Les [**Releases**](../../releases) fournissent **2 paquets qui couvrent à eux deux
+tous les Synology 64 bits** :
 
-- **`apollolake`** — Intel, **DS918+** et famille (DS218+, DS718+, DS418play…).
-- **`aarch64`** — ARM 64-bit : **rtd1296** (ex. DS220j), rtd1619b, armada37xx.
+- **`mailvault_x64-7.3`** — **tous les modèles Intel x86-64**. Archs déclarées : `apollolake`,
+  `avoton`, `braswell`, `broadwell`, `broadwellnk`, `broadwellnkv2`, `broadwellntbap`, `bromolow`,
+  `denverton`, `epyc7002`, `geminilake`, `geminilakenk`, `grantley`, `icelaked`, `kvmx64`, `purley`,
+  `r1000`, `r1000nk`, `v1000`, `v1000nk` (DS918+, DS220+, DS723+, DS1821+…). DSM ≥ 7.3 requis.
+- **`mailvault_aarch64-7.2`** — **ARM 64-bit** : `rtd1296` (ex. DS220j), `rtd1619b`, `armada37xx`.
+  DSM ≥ 7.2 requis (tourne sans souci en 7.3/7.4).
 
-Pour une autre famille, recompiler en changeant juste la cible :
+*Testé en production sur un **DS918+** (Intel, y compris après une montée en DSM 7.4) et un
+**DS220j** (ARM).*
+
+Ce sont exactement les deux cibles de build utilisées :
 
 ```bash
 make arch-x64-7.3       # un seul paquet pour TOUS les modèles Intel x86-64
@@ -284,8 +302,9 @@ votre arch ; le binaire tourne quand même sur DSM plus récent.)*
 - **Sécurité** : les hashes `$6$` des comptes NAS sont copiés dans le `passwd-file` (0600, lisible par
   le seul user `mailvault`) — exposition équivalente à tout serveur mail à auth locale.
 - **iptables non persistants** : d'où la tâche « au démarrage » obligatoire.
-- **Build par architecture** : ce dépôt cible **apollolake (x86-64)**. Pour un NAS ARM
-  (ex. `rtd1296`/aarch64), recompiler `cross/dovecot`.
+- **Build par architecture** : Dovecot est compilé par famille d'arch. Les deux paquets publiés
+  couvrent **tout l'Intel x86-64** et l'**ARM 64-bit** (rtd1296/rtd1619b/armada37xx). Pour une autre
+  famille (ex. ARM 32 bits `armv7`), recompiler `cross/dovecot` pour cette arch.
 
 ---
 
