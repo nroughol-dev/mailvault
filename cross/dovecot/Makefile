@@ -10,7 +10,7 @@ DEPENDS = cross/openssl3 cross/zlib
 
 HOMEPAGE = https://www.dovecot.org
 COMMENT  = Dovecot is an open source IMAP and POP3 email server for Linux/UNIX-like systems, written with security primarily in mind.
-LICENSE  = GPLv2/LGPL
+LICENSE  = MIT, LGPL-2.1
 
 # Autoconf-based: makes spksrc inject --host/--build (real cross) + --prefix +
 # --localstatedir. Without it, configure got no --prefix (libtool install path

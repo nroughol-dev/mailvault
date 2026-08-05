@@ -60,7 +60,7 @@ So the solution has **3 parts**:
 │  scripts/mailvault-root-sync.sh   (root task, boot + daily)       │
 │   • reads /etc/shadow → Dovecot passwd-file (NAS password)         │
 │   • finds the DSM Let's Encrypt cert → pushes it to the package    │
-│   • adds the iptables REDIRECT rules (LAN)                         │
+│   • adds the REDIRECT rules, IPv4 + IPv6 (LAN)                     │
 └───────────────────────────────────────────────────────────────────┘
 + External access: the router forwards 993/465 to the NAS (unchanged).
 ```
@@ -142,8 +142,10 @@ your arch; the binary still runs on newer DSM.)*
 
 ### ⚙️ Configuration
 
-- **Certificate / domain**: **auto-detected** from the DSM **default certificate** — no config
-  needed. To force a specific cert, set `DOMAIN` at the top of `scripts/mailvault-root-sync.sh`.
+- **Certificate / domain**: **auto-detected** — no config needed. The task picks the **Let's Encrypt
+  certificate** with the longest remaining validity, falling back to the DSM **default certificate**,
+  then to any other valid one. Expired certificates are never pushed. To force a specific cert, set
+  `DOMAIN` at the top of `scripts/mailvault-root-sync.sh`.
 - **Served accounts**: by default **every** home user with a `.Maildir` is served. To restrict, list
   the wanted users (one per line) in `/var/packages/mailvault/var/imap-users.list`.
 - **Listen ports**: `10143` (IMAP), `10993` (IMAPS), `10587`/`10465` (submission).
@@ -206,7 +208,7 @@ La solution repose donc sur **3 morceaux** :
 │  scripts/mailvault-root-sync.sh  (tâche root, boot + quotidien)   │
 │   • lit /etc/shadow → passwd-file Dovecot (mot de passe NAS)       │
 │   • détecte le cert Let's Encrypt DSM → le pousse au paquet        │
-│   • pose les règles iptables REDIRECT (LAN)                       │
+│   • pose les règles REDIRECT, IPv4 + IPv6 (LAN)                   │
 └───────────────────────────────────────────────────────────────────┘
 + Accès externe : le routeur forwarde 993/465 vers le NAS (inchangé).
 ```
@@ -290,8 +292,10 @@ votre arch ; le binaire tourne quand même sur DSM plus récent.)*
 
 ### ⚙️ Configuration
 
-- **Certificat / domaine** : **auto-détecté** depuis le **certificat par défaut** de DSM — aucun
-  réglage. Pour forcer un cert précis, définir `DOMAIN` en tête de `scripts/mailvault-root-sync.sh`.
+- **Certificat / domaine** : **auto-détecté** — aucun réglage. La tâche retient le **certificat
+  Let's Encrypt** ayant la plus longue validité restante, à défaut le **certificat par défaut** de
+  DSM, à défaut n'importe quel autre certificat valide. Un certificat expiré n'est jamais poussé.
+  Pour forcer un cert précis, définir `DOMAIN` en tête de `scripts/mailvault-root-sync.sh`.
 - **Comptes servis** : par défaut **tous** les utilisateurs home ayant un `.Maildir`. Pour restreindre,
   lister les utilisateurs voulus (un par ligne) dans `/var/packages/mailvault/var/imap-users.list`.
 - **Ports d'écoute** : `10143` (IMAP), `10993` (IMAPS), `10587`/`10465` (submission).

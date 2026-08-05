@@ -2,7 +2,7 @@
 #
 # mailvault-root-sync.sh
 #
-# Tache ROOT pour le paquet SynoDovecot. A planifier dans DSM (Planificateur de
+# Tache ROOT pour le paquet MailVault. A planifier dans DSM (Planificateur de
 # taches -> Tache declenchee -> Au demarrage, ET une tache planifiee quotidienne),
 # executee par root :
 #     /volume1/scripts/mailvault-root-sync.sh
@@ -12,8 +12,8 @@
 #      depuis /etc/shadow vers le passwd-file de Dovecot -> mot de passe IMAP =
 #      mot de passe NAS.
 #   2. SYNCHRO CERTIFICAT : pousse le certificat Let's Encrypt DSM dans le paquet.
-#   3. REDIRECTION PORTS : 993->10993 et 465->10465 (LAN), Dovecot ne pouvant pas
-#      binder les ports <1024 en non-root.
+#   3. REDIRECTION PORTS : 993->10993 et 465->10465 (LAN, IPv4 ET IPv6), Dovecot
+#      ne pouvant pas binder les ports <1024 en non-root.
 #
 set -u
 
@@ -28,7 +28,9 @@ USERLIST="${PKGVAR}/imap-users.list"
 USERS="${PKGVAR}/users"
 CERT_DST="${PKGVAR}/certs"
 # Domaine du certificat a servir :
-#   vide  => AUTO : utilise le certificat par defaut de DSM (recommande, aucun reglage).
+#   vide  => AUTO (recommande, aucun reglage) : prend le certificat Let's Encrypt
+#            valide le plus durable de _archive ; a defaut le certificat par
+#            defaut de DSM ; a defaut le premier cert valide trouve.
 #   sinon => force un domaine precis (le cert dont le SAN contient ce domaine).
 DOMAIN=""
 ARCHIVE_DIR="/usr/syno/etc/certificate/_archive"
@@ -85,32 +87,59 @@ sync_passwords() {
 # ---------------------------------------------------------------------------
 # 2. Synchro du certificat Let's Encrypt (modele sync-letsencrypt-to-containers)
 # ---------------------------------------------------------------------------
+# Score de validite restante d'un cert : nombre de paliers franchis, 0 = expire.
+# On procede par paliers plutot qu'en comparant les dates parce que le busybox
+# date de DSM ne sait pas lire le format openssl ("Jun 24 12:00:00 2026 GMT").
+# Sert a departager plusieurs certificats de facon deterministe : un cert LE
+# fraichement renouvele (90 j) l'emporte sur un qui expire dans 5 jours.
+cert_score() {
+    local s=0 t
+    for t in 0 604800 2592000 5184000 7776000 15552000 31536000 63072000; do
+        openssl x509 -in "$1" -noout -checkend "$t" >/dev/null 2>&1 || break
+        s=$((s + 1))
+    done
+    echo "$s"
+}
+
+# Meilleur cert NON EXPIRE de _archive parmi ceux passant le filtre $1
+# ("le" = issuer Let's Encrypt, "domain" = SAN contenant $DOMAIN, "any" = tous).
+pick_best_cert() {
+    local mode="$1" c s best="" best_score=0
+    for c in "$ARCHIVE_DIR"/*/; do
+        [ -f "${c}cert.pem" ] || continue
+        case "$mode" in
+            le)     openssl x509 -in "${c}cert.pem" -noout -issuer 2>/dev/null | grep -qi "let.s encrypt" || continue ;;
+            domain) openssl x509 -in "${c}cert.pem" -text -noout 2>/dev/null | grep -q "DNS:${DOMAIN}\b" || continue ;;
+        esac
+        s=$(cert_score "${c}cert.pem")
+        [ "$s" -gt "$best_score" ] || continue   # 0 = expire -> jamais retenu
+        best_score="$s"; best="${c%/}"
+    done
+    [ -n "$best" ] && echo "$best"
+}
+
 # Determine le repertoire du certificat a utiliser (stdout), "" si rien.
+# Un certificat expire n'est jamais retenu : mieux vaut garder celui deja en
+# place que de casser le TLS des clients.
 find_cert_dir() {
-    local c
-    # 1. Domaine force -> cert dont le SAN contient $DOMAIN
+    local d
+    # 1. Domaine force -> cert valide dont le SAN contient $DOMAIN
     if [ -n "$DOMAIN" ]; then
-        for c in "$ARCHIVE_DIR"/*/; do
-            [ -f "${c}cert.pem" ] || continue
-            openssl x509 -in "${c}cert.pem" -text -noout 2>/dev/null | grep -q "DNS:${DOMAIN}\b" && { echo "${c%/}"; return; }
-        done
+        pick_best_cert domain
         return
     fi
     # 2. AUTO : cert Let's Encrypt (issuer = Let's Encrypt) -> le vrai cert du domaine
     #    externe, meme si le certificat "par defaut" de DSM est l'auto-signe Synology.
-    for c in "$ARCHIVE_DIR"/*/; do
-        [ -f "${c}cert.pem" ] || continue
-        openssl x509 -in "${c}cert.pem" -noout -issuer 2>/dev/null | grep -qi "let.s encrypt" && { echo "${c%/}"; return; }
-    done
+    d=$(pick_best_cert le)
+    [ -n "$d" ] && { echo "$d"; return; }
     # 3. Sinon : certificat par defaut de DSM (suit le symlink vers _archive/<id>)
-    if [ -f "${SYSTEM_DEFAULT_CERT}/cert.pem" ] && [ -f "${SYSTEM_DEFAULT_CERT}/privkey.pem" ]; then
+    if [ -f "${SYSTEM_DEFAULT_CERT}/cert.pem" ] && [ -f "${SYSTEM_DEFAULT_CERT}/privkey.pem" ] \
+       && [ "$(cert_score "${SYSTEM_DEFAULT_CERT}/cert.pem")" -gt 0 ]; then
         readlink -f "${SYSTEM_DEFAULT_CERT}" 2>/dev/null || echo "${SYSTEM_DEFAULT_CERT}"
         return
     fi
-    # 4. Fallback : premier cert trouve dans _archive
-    for c in "$ARCHIVE_DIR"/*/; do
-        [ -f "${c}cert.pem" ] && { echo "${c%/}"; return; }
-    done
+    # 4. Fallback : meilleur cert valide de _archive, tous emetteurs confondus
+    pick_best_cert any
 }
 
 sync_cert() {
@@ -118,21 +147,29 @@ sync_cert() {
     [ -d "$ARCHIVE_DIR" ] || { log "cert: ${ARCHIVE_DIR} absent"; return; }
 
     local src; src=$(find_cert_dir)
-    [ -n "$src" ] || { log "cert: aucun certificat trouve (ni defaut DSM ni _archive)${DOMAIN:+ pour domaine $DOMAIN}"; return; }
+    [ -n "$src" ] || { log "cert: aucun certificat valide trouve (ni defaut DSM ni _archive)${DOMAIN:+ pour domaine $DOMAIN} -> cert en place conserve"; return; }
     local dom; dom=$(openssl x509 -in "$src/cert.pem" -noout -subject 2>/dev/null | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p' | head -1)
     log "cert: certificat detecte ${src} (domaine: ${dom:-inconnu})"
 
+    # DSM prefixe en RSA-* quand une entree porte a la fois un cert RSA et un ECC.
+    # Le prefixe se choisit en bloc : melanger RSA-privkey.pem et cert.pem (ECC)
+    # donnerait une paire incoherente.
+    local pfx=""
+    [ -f "$src/RSA-privkey.pem" ] && [ -f "$src/RSA-cert.pem" ] && pfx="RSA-"
     local key crt chn fc
-    key="$src/RSA-privkey.pem";  [ -f "$key" ] || key="$src/privkey.pem"
-    crt="$src/RSA-cert.pem";     [ -f "$crt" ] || crt="$src/cert.pem"
-    chn="$src/RSA-chain.pem";    [ -f "$chn" ] || chn="$src/chain.pem"
-    fc="$src/RSA-fullchain.pem"; [ -f "$fc" ]  || fc="$src/fullchain.pem"
+    key="$src/${pfx}privkey.pem"
+    crt="$src/${pfx}cert.pem"
+    chn="$src/${pfx}chain.pem"
+    fc="$src/${pfx}fullchain.pem"
     for f in "$key" "$crt"; do [ -f "$f" ] || { log "cert: fichier manquant $f"; return; }; done
 
-    local km cm
-    km=$(openssl rsa  -in "$key" -modulus -noout 2>/dev/null | openssl md5 | awk '{print $NF}')
-    cm=$(openssl x509 -in "$crt" -modulus -noout 2>/dev/null | openssl md5 | awk '{print $NF}')
-    [ -n "$km" ] && [ "$km" = "$cm" ] || { log "cert: cle/cert ne correspondent pas"; return; }
+    # Comparaison sur la cle publique, pas sur le modulus : "openssl rsa" echoue
+    # sur une cle ECDSA (DSM et acme.sh en emettent), ce qui ferait passer une
+    # paire valide pour incoherente et bloquerait la synchro indefiniment.
+    local kp cp
+    kp=$(openssl pkey -in "$key" -pubout      2>/dev/null | openssl md5 | awk '{print $NF}')
+    cp=$(openssl x509 -in "$crt" -pubkey -noout 2>/dev/null | openssl md5 | awk '{print $NF}')
+    [ -n "$kp" ] && [ "$kp" = "$cp" ] || { log "cert: cle/cert ne correspondent pas"; return; }
 
     local tmp; tmp=$(mktemp -d)
     cp "$key" "$tmp/privkey.pem"
@@ -167,17 +204,26 @@ sync_cert() {
 # ---------------------------------------------------------------------------
 # 3. Redirection des ports standards vers les ports hauts de Dovecot
 # ---------------------------------------------------------------------------
-redirect_ports() {
-    command -v iptables >/dev/null || { log "ports: iptables introuvable"; return; }
-    local m std high
+# Pose les REDIRECT pour une famille d'adresses. $1 = binaire, $2 = libelle.
+redirect_family() {
+    local bin="$1" fam="$2" m std high
+    command -v "$bin" >/dev/null || { log "ports: ${bin} introuvable -> ${fam} ignore"; return; }
     for m in $PORT_MAP; do
         std="${m%%:*}"; high="${m##*:}"
-        if ! iptables -t nat -C PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null; then
-            iptables -t nat -A PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" \
-                && log "ports: REDIRECT ${std}->${high} ajoute" \
-                || log "ports: ECHEC REDIRECT ${std}->${high}"
+        if ! "$bin" -t nat -C PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null; then
+            "$bin" -t nat -A PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" \
+                && log "ports: ${fam} REDIRECT ${std}->${high} ajoute" \
+                || log "ports: ${fam} ECHEC REDIRECT ${std}->${high}"
         fi
     done
+}
+
+redirect_ports() {
+    redirect_family iptables  IPv4
+    # Indispensable des que le NAS a une IPv6 routable (delegation de prefixe
+    # frequente, IPv6 actif par defaut en DSM) : un client qui resout l'AAAA se
+    # connecte en IPv6, ou aucune regle NAT IPv4 ne s'applique.
+    redirect_family ip6tables IPv6
 }
 
 log "=== mailvault-root-sync : debut ==="
