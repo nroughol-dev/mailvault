@@ -241,6 +241,14 @@ redirect_family() {
     "$bin" -t nat -L -n >/dev/null 2>&1 || { log "ports: ${fam} sans table nat -> ignore"; return; }
     for m in $PORT_MAP; do
         std="${m%%:*}"; high="${m##*:}"
+        # ⛔ Retirer d'abord l'ancienne forme, SANS addrtype : ajoutee par une version
+        # anterieure, elle precede la nouvelle dans la chaine et continue de capturer
+        # le transit -- le correctif serait inoperant, et en silence. Constate le
+        # 2026-09-12 en deployant sur un second NAS deja equipe. Boucle car la regle
+        # peut avoir ete ajoutee plusieurs fois.
+        while "$bin" -t nat -D PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null; do
+            log "ports: ${fam} ancienne regle ${std}->${high} sans addrtype retiree"
+        done
         if ! "$bin" -t nat -C PREROUTING -p tcp --dport "$std" -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$high" 2>/dev/null; then
             "$bin" -t nat -A PREROUTING -p tcp --dport "$std" -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$high" \
                 && log "ports: ${fam} REDIRECT ${std}->${high} ajoute" \
