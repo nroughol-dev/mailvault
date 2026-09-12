@@ -87,6 +87,13 @@ sync_passwords() {
 # ---------------------------------------------------------------------------
 # 2. Synchro du certificat Let's Encrypt (modele sync-letsencrypt-to-containers)
 # ---------------------------------------------------------------------------
+# Un certificat auto-signe porte le meme sujet que son emetteur. Sert a ne pas
+# retenir le placeholder Synology quand un vrai certificat existe.
+is_self_signed() {
+    [ "$(openssl x509 -in "$1" -noout -subject 2>/dev/null | sed 's/^subject=//')" \
+      = "$(openssl x509 -in "$1" -noout -issuer  2>/dev/null | sed 's/^issuer=//')" ]
+}
+
 # Score de validite restante d'un cert : nombre de paliers franchis, 0 = expire.
 # On procede par paliers plutot qu'en comparant les dates parce que le busybox
 # date de DSM ne sait pas lire le format openssl ("Jun 24 12:00:00 2026 GMT").
@@ -128,17 +135,31 @@ find_cert_dir() {
         pick_best_cert domain
         return
     fi
-    # 2. AUTO : cert Let's Encrypt (issuer = Let's Encrypt) -> le vrai cert du domaine
+    # 2. AUTO : le certificat par DEFAUT de DSM, s'il est valide et pas auto-signe.
+    #    C'est celui que l'admin a designe pour la machine, donc celui dont le SAN
+    #    couvre le nom reellement servi.
+    #    ⛔ 2026-09-12 : sans cette etape, la suivante a choisi un Let's Encrypt d'un
+    #    AUTRE sous-domaine au seul motif qu'il expirait plus tard -- un certificat
+    #    residuel, laisse dans _archive apres qu'un service eut change d'adresse.
+    #    Tous les clients IMAP sont alors passes en "hostname mismatch". Trier par
+    #    duree de validite ne dit RIEN du nom couvert.
+    if [ -f "${SYSTEM_DEFAULT_CERT}/cert.pem" ] && [ -f "${SYSTEM_DEFAULT_CERT}/privkey.pem" ] \
+       && [ "$(cert_score "${SYSTEM_DEFAULT_CERT}/cert.pem")" -gt 0 ] \
+       && ! is_self_signed "${SYSTEM_DEFAULT_CERT}/cert.pem"; then
+        readlink -f "${SYSTEM_DEFAULT_CERT}" 2>/dev/null || echo "${SYSTEM_DEFAULT_CERT}"
+        return
+    fi
+    # 3. Sinon : cert Let's Encrypt (issuer = Let's Encrypt) -> le vrai cert du domaine
     #    externe, meme si le certificat "par defaut" de DSM est l'auto-signe Synology.
     d=$(pick_best_cert le)
     [ -n "$d" ] && { echo "$d"; return; }
-    # 3. Sinon : certificat par defaut de DSM (suit le symlink vers _archive/<id>)
+    # 4. Sinon : certificat par defaut de DSM meme auto-signe (suit le symlink)
     if [ -f "${SYSTEM_DEFAULT_CERT}/cert.pem" ] && [ -f "${SYSTEM_DEFAULT_CERT}/privkey.pem" ] \
        && [ "$(cert_score "${SYSTEM_DEFAULT_CERT}/cert.pem")" -gt 0 ]; then
         readlink -f "${SYSTEM_DEFAULT_CERT}" 2>/dev/null || echo "${SYSTEM_DEFAULT_CERT}"
         return
     fi
-    # 4. Fallback : meilleur cert valide de _archive, tous emetteurs confondus
+    # 5. Fallback : meilleur cert valide de _archive, tous emetteurs confondus
     pick_best_cert any
 }
 
@@ -205,13 +226,23 @@ sync_cert() {
 # 3. Redirection des ports standards vers les ports hauts de Dovecot
 # ---------------------------------------------------------------------------
 # Pose les REDIRECT pour une famille d'adresses. $1 = binaire, $2 = libelle.
+# ⛔ "-m addrtype --dst-type LOCAL" est OBLIGATOIRE : sans lui, PREROUTING capture
+# aussi le trafic qui ne fait que TRAVERSER le NAS (clients OpenVPN routes par lui,
+# a plus forte raison en full-tunnel). Constate le 2026-09-12 : les sessions IMAP et
+# SMTP vers ssl0.ovh.net, imap.gmail.com ou o2switch se terminaient sur le NAS, qui
+# presentait SON certificat a la place de celui du serveur vise.
 redirect_family() {
     local bin="$1" fam="$2" m std high
     command -v "$bin" >/dev/null || { log "ports: ${bin} introuvable -> ${fam} ignore"; return; }
+    # DSM 7 peut livrer un ip6tables SANS table nat (module ip6table_nat absent du
+    # noyau) : constate le 2026-09-12 sur un DS918+ en DSM 7.2, "can't initialize ip6tables
+    # table nat". Sans ce test, chaque execution echouerait sur les quatre ports et
+    # remplirait le journal sans rien pouvoir corriger.
+    "$bin" -t nat -L -n >/dev/null 2>&1 || { log "ports: ${fam} sans table nat -> ignore"; return; }
     for m in $PORT_MAP; do
         std="${m%%:*}"; high="${m##*:}"
-        if ! "$bin" -t nat -C PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null; then
-            "$bin" -t nat -A PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" \
+        if ! "$bin" -t nat -C PREROUTING -p tcp --dport "$std" -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$high" 2>/dev/null; then
+            "$bin" -t nat -A PREROUTING -p tcp --dport "$std" -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$high" \
                 && log "ports: ${fam} REDIRECT ${std}->${high} ajoute" \
                 || log "ports: ${fam} ECHEC REDIRECT ${std}->${high}"
         fi
