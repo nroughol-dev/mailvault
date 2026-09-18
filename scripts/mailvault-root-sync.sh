@@ -246,7 +246,12 @@ redirect_family() {
         # le transit -- le correctif serait inoperant, et en silence. Constate le
         # 2026-09-12 en deployant sur un second NAS deja equipe. Boucle car la regle
         # peut avoir ete ajoutee plusieurs fois.
-        while "$bin" -t nat -D PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null; do
+        # ⛔ Boucle BORNEE : sur le build DSM (iptables 1.8.3), "-D" renvoie 0 meme
+        # quand aucune regle ne correspond -- une boucle "while" tourne alors sans
+        # fin, le script n'atteint jamais la pose des regles et l'IMAP reste mort.
+        # Constate le 2026-09-18, apres le premier reboot suivant le deploiement.
+        for _ in 1 2 3; do
+            "$bin" -t nat -D PREROUTING -p tcp --dport "$std" -j REDIRECT --to-ports "$high" 2>/dev/null || break
             log "ports: ${fam} ancienne regle ${std}->${high} sans addrtype retiree"
         done
         if ! "$bin" -t nat -C PREROUTING -p tcp --dport "$std" -m addrtype --dst-type LOCAL -j REDIRECT --to-ports "$high" 2>/dev/null; then
